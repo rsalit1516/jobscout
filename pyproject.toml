@@ -8,6 +8,7 @@ dependencies = [
     "python-dotenv>=1.0", # loads .env into environment variables
     "pandas>=2.2",        # tabular data (think LINQ + DataTable)
     "anthropic>=0.70",    # Claude API SDK
+    "streamlit>=1.66.1",
 ]
 
 [dependency-groups]

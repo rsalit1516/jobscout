@@ -7,3 +7,4 @@ data/*.csv
 data/*.json
 !data/sample_jobs.json
 profile.md
+data/*.db

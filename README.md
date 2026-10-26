@@ -41,6 +41,16 @@ Results accumulate in `data/jobs.csv` (duplicates removed by job ID).
    ```
 Scores are cached in `data/scores.json` by job ID, so reruns don't cost anything.
 
+## Tracker (Streamlit page)
+
+```
+uv run streamlit run src/jobscout/app.py
+```
+
+Add applications by hand or import fetched jobs, edit status/notes/follow-up dates in the grid,
+and see what follow-ups are due. Data lives in `data/tracker.db` (SQLite, git-ignored).
+Storage code is in `src/jobscout/tracker.py`; the page is `src/jobscout/app.py`.
+
 ## Notebook
 
 Open `notebooks/01_explore.ipynb` in VS Code. When it asks for a kernel, pick the
