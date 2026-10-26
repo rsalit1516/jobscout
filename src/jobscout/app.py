@@ -67,18 +67,20 @@ view = apps[apps["status"].isin(chosen)] if chosen else apps
 # data_editor is an editable grid. It returns the edited frame, so we diff
 # against the original to find what changed. Dates are stored as text, so we
 # convert for display and back on save.
-date_cols = ["applied_date", "follow_up_date"]
+date_cols = ["posted_at", "applied_date", "follow_up_date"]   # editable dates
 shown = view.drop(columns=["created_at"]).copy()
-for c in date_cols:
+for c in [*date_cols, "retrieved_at"]:
     shown[c] = pd.to_datetime(shown[c])
 
 edited = st.data_editor(
     shown,
     hide_index=True,
     width="stretch",
-    disabled=["id", "job_id"],
+    disabled=["id", "job_id", "retrieved_at"],
     column_config={
         "status": st.column_config.SelectboxColumn(options=tracker.STATUSES, required=True),
+        "posted_at": st.column_config.DateColumn("Posted"),
+        "retrieved_at": st.column_config.DateColumn("Retrieved"),
         "applied_date": st.column_config.DateColumn(),
         "follow_up_date": st.column_config.DateColumn(),
         "url": st.column_config.LinkColumn(),
