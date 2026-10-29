@@ -22,8 +22,13 @@ max_calls = 15                 # hard cap on API calls per run (free tier is ~20
 exclude_remote = true          # keep hybrid / on-site only
 # A title must match one of these (case-insensitive regex) to count as management-level...
 title_include = ['manager', 'mgr', 'director', 'head of', 'vice president', '\bvp\b']
-# ...and must not match any of these (entry-level / individual-contributor markers).
-title_exclude = ['intern', 'junior', '\bjr\b', 'entry', 'assistant', 'associate (?!director)']
+# ...and must not match any of these: entry-level / individual-contributor markers, then
+# trades and other non-software fields that "Project Manager" searches pull in.
+title_exclude = [
+    'intern', 'junior', '\bjr\b', 'entry', 'assistant', 'associate (?!director)',
+    'construction', 'hvac', 'hotel', 'architect', 'civil', 'plumbing', 'electrician',
+    'restaurant', 'facilit', 'warehouse', 'retail', 'roofing', 'landscap',
+]
 
 [[groups]]
 name = "Software Engineering Manager"

@@ -56,3 +56,19 @@ def test_score_given_as_string_is_converted():
 def test_garbage_raises_value_error():
     with pytest.raises(ValueError):
         parse_response("j8", "I cannot score this job.")
+
+
+def test_build_prompt_contains_profile_and_posting():
+    from jobscout.models import Job
+    from jobscout.scorer import build_prompt
+
+    job = Job(job_id="x", title="Engineering Manager", employer="Acme", city="Delray Beach", state="FL",
+              is_remote=False, posted_at=None, apply_link=None, description="Lead a team of 8.",
+              min_salary=130000, max_salary=160000)
+    text = build_prompt("I like MedTech.", job)
+    assert "<profile>" in text and "I like MedTech." in text
+    assert "Engineering Manager" in text and "Acme" in text and "Delray Beach, FL" in text
+    assert "$130,000 - $160,000" in text and "Lead a team of 8." in text
+    assert "Salary: not stated" in build_prompt("p", Job(job_id="y", title="t", employer="e", city=None,
+                                                        state=None, is_remote=True, posted_at=None,
+                                                        apply_link=None, description=""))

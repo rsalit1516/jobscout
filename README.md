@@ -41,6 +41,17 @@ Results accumulate in `data/jobs.csv` (duplicates removed by job ID).
    ```
 Scores are cached in `data/scores.json` by job ID, so reruns don't cost anything.
 
+## Fetch, filter, score, import
+
+```
+uv run jobscout-run --dry-run     # show the search plan, no API calls
+uv run jobscout-run               # run searches.toml, filter, de-duplicate, import, score with Claude
+uv run jobscout-run --no-score    # import only
+```
+
+`searches.toml` holds the titles, variants, radius and filters. A run is capped at `max_calls` JSearch
+calls (the free tier is about 200 a month). Each new job gets a 1-10 match score against `profile.md`.
+
 ## Tracker (Streamlit page)
 
 ```

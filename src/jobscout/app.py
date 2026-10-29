@@ -7,6 +7,7 @@ survive between runs goes in st.session_state (none needed here: the database
 is our state).
 """
 
+import json
 from datetime import date
 
 import pandas as pd
@@ -63,12 +64,15 @@ if not due.empty:
 st.subheader("Applications")
 chosen = st.multiselect("Filter by status", tracker.STATUSES)
 view = apps[apps["status"].isin(chosen)] if chosen else apps
+view = view.sort_values("score", ascending=False, na_position="last", kind="stable")   # best matches first
 
 # data_editor is an editable grid. It returns the edited frame, so we diff
 # against the original to find what changed. Dates are stored as text, so we
 # convert for display and back on save.
 date_cols = ["posted_at", "applied_date", "follow_up_date"]   # editable dates
-shown = view.drop(columns=["created_at"]).copy()
+column_order = ["id", "score", "title", "employer", "location", "status", "verdict", "posted_at",
+                "retrieved_at", "source", "url", "applied_date", "follow_up_date", "contact", "notes", "job_id"]
+shown = view[column_order].copy()
 for c in [*date_cols, "retrieved_at"]:
     shown[c] = pd.to_datetime(shown[c])
 
@@ -76,8 +80,9 @@ edited = st.data_editor(
     shown,
     hide_index=True,
     width="stretch",
-    disabled=["id", "job_id", "retrieved_at"],
+    disabled=["id", "job_id", "retrieved_at", "score", "verdict", "source"],
     column_config={
+        "score": st.column_config.NumberColumn("Match", format="%d"),
         "status": st.column_config.SelectboxColumn(options=tracker.STATUSES, required=True),
         "posted_at": st.column_config.DateColumn("Posted"),
         "retrieved_at": st.column_config.DateColumn("Retrieved"),
@@ -104,6 +109,19 @@ if st.button("Save changes"):
             changed += 1
     st.success(f"Saved {changed} row(s).")
     st.rerun()
+
+scored = apps[apps["score"].notna()].sort_values("score", ascending=False)
+if not scored.empty:
+    with st.expander("Why this score?"):
+        pick = st.selectbox(
+            "Job", scored["id"],
+            format_func=lambda i: "{:.0f}  {} @ {}".format(
+                *scored.loc[scored["id"] == i, ["score", "title", "employer"]].iloc[0]))
+        row = scored[scored["id"] == pick].iloc[0]
+        st.write(row["verdict"])
+        left, right = st.columns(2)
+        left.markdown("**Reasons**\n" + "\n".join(f"- {r}" for r in json.loads(row["score_reasons"] or "[]")))
+        right.markdown("**Concerns**\n" + "\n".join(f"- {c}" for c in json.loads(row["score_concerns"] or "[]")))
 
 with st.expander("Delete an application"):
     del_id = st.number_input("Application id", min_value=1, step=1)

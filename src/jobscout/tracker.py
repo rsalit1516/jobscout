@@ -7,6 +7,7 @@ no Entity Framework.
 Every function takes an optional `db` path so tests can point at a temp file.
 """
 
+import json
 import sqlite3
 from contextlib import closing
 from datetime import date
@@ -34,13 +35,18 @@ CREATE TABLE IF NOT EXISTS applications (
     created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     posted_at      TEXT,                 -- when the employer posted it (from the source data)
     retrieved_at   TEXT,                 -- when we pulled it in
-    source         TEXT                  -- where it was found (LinkedIn, Indeed, ...)
+    source         TEXT,                 -- where it was found (LinkedIn, Indeed, ...)
+    score          INTEGER,              -- 1-10 match against profile.md (see scorer.py)
+    verdict        TEXT,
+    score_reasons  TEXT,                 -- JSON list of strings
+    score_concerns TEXT                  -- JSON list of strings
 )
 """
 
 # Columns added after the first release. CREATE TABLE IF NOT EXISTS won't touch an
 # existing table, so _migrate() adds any of these that are missing.
-LATER_COLUMNS = {"posted_at": "TEXT", "retrieved_at": "TEXT", "source": "TEXT"}
+LATER_COLUMNS = {"posted_at": "TEXT", "retrieved_at": "TEXT", "source": "TEXT", "score": "INTEGER",
+                 "verdict": "TEXT", "score_reasons": "TEXT", "score_concerns": "TEXT"}
 
 # Columns the UI is allowed to change. Also guards update() against SQL injection,
 # since column names can't be passed as ? parameters.
@@ -145,3 +151,21 @@ def import_jobs(jobs_df: pd.DataFrame, *, db: Path = DB_PATH) -> int:
             )
             added += cur.rowcount        # 0 when the job_id already existed
     return added
+
+
+def save_score(job_id: str, score: int, verdict: str, reasons: list[str], concerns: list[str],
+               *, db: Path = DB_PATH) -> None:
+    """Attach a match score to the application with this job_id (no-op if there isn't one)."""
+    with closing(_connect(db)) as conn, conn:
+        conn.execute(
+            "UPDATE applications SET score = ?, verdict = ?, score_reasons = ?, score_concerns = ? "
+            "WHERE job_id = ?",
+            [score, verdict, json.dumps(reasons), json.dumps(concerns), job_id],
+        )
+
+
+def unscored_job_ids(*, db: Path = DB_PATH) -> set[str]:
+    """job_ids of fetched applications that don't have a score yet."""
+    with closing(_connect(db)) as conn:
+        rows = conn.execute("SELECT job_id FROM applications WHERE job_id IS NOT NULL AND score IS NULL")
+        return {row["job_id"] for row in rows}

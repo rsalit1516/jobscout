@@ -1,13 +1,8 @@
 """Score job postings against profile.md using the Claude API.
 
-The plumbing (API client, caching, the loop) is done. Two functions are
-yours to write, marked TODO:
-
-    build_prompt(profile, job)  -> the message Claude sees
-    parse_response(text)        -> turn Claude's reply into a Score
-
-`uv run pytest` tells you when parse_response is right; the tests in
-tests/test_scorer.py are the spec.
+The prompt (SYSTEM_PROMPT, build_prompt) is the part worth tuning: change it, run
+`uv run jobscout-score --rescore`, and compare. parse_response turns Claude's reply
+into a Score; tests/test_scorer.py is its spec.
 """
 
 import json
@@ -40,35 +35,69 @@ class Score:
 
 
 # --------------------------------------------------------------------------
-# YOUR CODE
+# PROMPT (written by Claude for review; tune it, then rerun with --rescore)
 # --------------------------------------------------------------------------
 
 SYSTEM_PROMPT = """\
-TODO: Tell Claude its role and how to behave.
+You are a recruiter screening job postings for ONE specific candidate. You are given the
+candidate's profile and a single posting. Judge how well the posting fits this candidate and
+return a score.
 
-Things worth deciding:
-  - Who is it? (a recruiter screening for one specific candidate?)
-  - What does each score mean? Anchor the scale, e.g. what makes a 9 vs a 5 vs a 2.
-    Without anchors, LLMs cluster everything around 6-7.
-  - How should dealbreakers affect the score?
-  - Exactly what JSON shape to return, and "JSON only, no other text".
+Scale (use the whole range; most postings are NOT a strong fit):
+  9-10  Exceptional. Target role and seniority, strong skills/domain overlap (e.g. MedTech or
+        regulated industry, .NET/Azure), location and pay acceptable, no concerns.
+  7-8   Good. Right kind of role and level; one minor gap (domain, stack, or a small unknown).
+  5-6   Possible. Related role or level but a notable gap, or key facts are missing.
+  3-4   Weak. Mostly mismatched domain, level or responsibilities.
+  1-2   Poor. Wrong field, wrong level, or an individual-contributor role.
+
+Rules:
+  - A dealbreaker listed in the profile (relocation, heavy travel, pure individual-contributor
+    coding, pay below the stated minimum) caps the score at 3, however good the rest looks.
+  - Judge the actual duties in the description, not just the title: "Project Manager" in
+    construction or hospitality is a poor fit for a software-delivery candidate.
+  - If something that matters (salary, travel, location, remote policy) is not stated, do not
+    guess. Treat it as neutral and mention it in "concerns".
+  - Be specific: refer to details of the posting, not generic praise.
+
+Reply with JSON only, no other text, in exactly this shape:
+{"score": <integer 1-10>,
+ "verdict": "<one sentence>",
+ "reasons": ["<why it fits>", ...],
+ "concerns": ["<gaps, dealbreakers, unknowns>", ...]}
 """
+
+MAX_DESCRIPTION_CHARS = 6000   # keeps cost down; the key details are near the top
+
+
+def _salary(job: Job) -> str:
+    if job.min_salary and job.max_salary:
+        return f"${job.min_salary:,.0f} - ${job.max_salary:,.0f}"
+    if job.min_salary or job.max_salary:
+        return f"${(job.min_salary or job.max_salary):,.0f}"
+    return "not stated"
 
 
 def build_prompt(profile: str, job: Job) -> str:
-    """Return the user message for one job.
+    """Return the user message for one job: profile and posting, each in its own tag."""
+    where = ", ".join(p for p in (job.city, job.state) if p) or "not stated"
+    posted = job.posted_at.date().isoformat() if job.posted_at else "not stated"
+    return f"""<profile>
+{profile.strip()}
+</profile>
 
-    TODO: Combine the profile and the job into one message. Include whatever
-    fields help Claude judge fit (title, employer, location, remote, salary,
-    description). Tip: wrapping each part in tags like <profile>...</profile>
-    and <job>...</job> helps Claude keep them apart.
+<job>
+Title: {job.title}
+Employer: {job.employer}
+Location: {where}
+Remote: {"yes" if job.is_remote else "no"}
+Salary: {_salary(job)}
+Posted: {posted}
+Source: {job.publisher or "unknown"}
 
-    Python tip: triple-quoted f-strings let you write multi-line templates:
-        f\"\"\"<job>
-        Title: {job.title}
-        </job>\"\"\"
-    """
-    raise NotImplementedError("build_prompt")
+Description:
+{job.description[:MAX_DESCRIPTION_CHARS]}
+</job>"""
 
 
 def parse_response(job_id: str, text: str) -> Score:
@@ -148,11 +177,13 @@ def score_job(client: anthropic.Anthropic, profile: str, job: Job) -> Score:
     """One API call for one job."""
     message = client.messages.create(
         model=MODEL,
-        max_tokens=600,
+        max_tokens=1000,
+        thinking={"type": "disabled"},    # we want the JSON straight away, not reasoning first
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": build_prompt(profile, job)}],
     )
-    text = message.content[0].text
+    # The reply is a list of blocks (text, and sometimes thinking); keep only the text.
+    text = "".join(block.text for block in message.content if block.type == "text")
     return parse_response(job.job_id, text)
 
 

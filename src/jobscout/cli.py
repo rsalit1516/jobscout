@@ -6,7 +6,7 @@
 
 import argparse
 
-from jobscout import jsearch, store
+from jobscout import jsearch, store, tracker
 
 
 def main() -> None:
@@ -31,18 +31,20 @@ def main() -> None:
 
 
 def run_main() -> None:
-    """uv run jobscout-run [--dry-run]  (searches.toml decides what to fetch)"""
-    from jobscout import config, runner
+    """uv run jobscout-run [--dry-run] [--no-score]  (searches.toml decides what to fetch)"""
+    from jobscout import config, runner, scorer
 
     parser = argparse.ArgumentParser(description="Run all configured searches and import into the tracker.")
     parser.add_argument("--dry-run", action="store_true", help="show the plan; make no API calls")
+    parser.add_argument("--no-score", action="store_true", help="import only; skip Claude scoring")
     args = parser.parse_args()
 
     cfg = config.load()
     if args.dry_run:
         print("\n".join(runner.plan(cfg)))
         return
-    print(runner.report(runner.run(cfg)))
+    score_fn = None if args.no_score else scorer.score_jobs
+    print(runner.report(runner.run(cfg, score_fn=score_fn)))
 
 
 def score_main() -> None:
@@ -59,9 +61,17 @@ def score_main() -> None:
     df = store.load()
     # Rebuild Job objects from the CSV rows. NaN (pandas' "missing") becomes None.
     rows = df.astype(object).where(pd.notna(df), None).to_dict("records")
-    jobs = [Job(**row) for row in rows][: args.limit]
+    jobs = [Job(**row) for row in rows]
+    # Only jobs that are in the tracker; skip ones already scored there unless --rescore.
+    wanted = set(tracker.list_all()["job_id"].dropna())
+    if not args.rescore:
+        wanted = tracker.unscored_job_ids()
+    jobs = [j for j in jobs if j.job_id in wanted][: args.limit]
+    print(f"Scoring {len(jobs)} job(s)")
 
     scores = scorer.score_jobs(jobs, rescore=args.rescore)
+    for s in scores:        # also record in the tracker (does nothing for jobs it doesn't have)
+        tracker.save_score(s.job_id, s.score, s.verdict, s.reasons, s.concerns)
     titles = {j.job_id: f"{j.title} @ {j.employer}" for j in jobs}   # dict comprehension
     for s in sorted(scores, key=lambda s: s.score, reverse=True):     # lambda = C# s => s.Score
         print(f"{s.score:>2}  {titles.get(s.job_id, s.job_id)}")

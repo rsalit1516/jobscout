@@ -29,6 +29,8 @@ def cfg():
     (make(title="Junior Engineering Manager"), "entry-level/IC title"),
     (make(title="Associate Engineering Manager"), "entry-level/IC title"),
     (make(title="Associate Director of Engineering"), None),
+    (make(title="Senior Construction Project Manager"), "entry-level/IC title"),   # non-software field
+    (make(title="Hotel Engineering Manager"), "entry-level/IC title"),
     (make(**FAR), "outside radius"),
     (make(latitude=None, longitude=None, city="Boca Raton"), None),
     (make(latitude=None, longitude=None, city="Tampa"), "outside radius"),
@@ -42,10 +44,66 @@ def test_distance_is_sane():
     assert 150 < filters.distance_miles(26.46, -80.07, 28.54, -81.38) < 190
 
 
-def test_dedupe_key_ignores_case_and_punctuation():
-    a = make(job_id="1", title="Engineering Manager, Software", employer="Acme, Inc.", city="Delray Beach")
-    b = make(job_id="2", title="engineering manager software", employer="ACME Inc", city="delray beach")
-    assert runner.dedupe_key(a) == runner.dedupe_key(b)
+def sig(title, employer="Suncap", city="Delray Beach"):
+    return runner.signature(title, employer, city)
+
+
+def test_same_posting_ignores_case_punctuation_and_location_words():
+    assert runner.same_posting(sig("Engineering Manager, Software", "Acme, Inc."),
+                               sig("engineering manager software", "ACME Inc", "delray beach"))
+    assert runner.same_posting(sig("Senior Project Manager (Delray Beach)"),
+                               sig("Senior Project Manager - Delray Beach, Florida, US"))
+    assert runner.same_posting(sig("Suncap is hiring: Project Manager in Delray Beach"),
+                               sig("Project Manager"))
+
+
+def test_different_jobs_are_not_merged():
+    assert not runner.same_posting(sig("Engineering Manager"), sig("Director of Engineering"))
+    assert not runner.same_posting(sig("Engineering Manager"), sig("Engineering Manager", city="Boca Raton"))
+    assert not runner.same_posting(sig("Engineering Manager"), sig("Engineering Manager", employer="Other"))
+
+
+def test_rerun_with_retitled_repost_is_not_new(cfg, tmp_path):
+    db = tmp_path / "t.db"
+    one_group = replace(cfg, groups=cfg.groups[:1], search=replace(cfg.search, max_calls=1))
+    first = FakeSearch({"Software Engineering Manager": [make(job_id="a", title="Engineering Manager")]})
+    assert runner.run(one_group, search_fn=first, db=db, save_csv=False).imported == 1
+    repost = FakeSearch({"Software Engineering Manager": [
+        make(job_id="zzz", title="Engineering Manager - Delray Beach, Florida", city="Delray Beach")]})
+    # The first job's city is None in make(); give both a city so the signatures can match.
+    tracker.update(1, location="Delray Beach, FL", db=db)
+    again = runner.run(one_group, search_fn=repost, db=db, save_csv=False)
+    assert again.imported == 0 and again.duplicates == 1
+
+
+def test_scores_are_saved_for_new_jobs_only(cfg, tmp_path):
+    from jobscout.scorer import Score
+    db = tmp_path / "t.db"
+    asked = []
+
+    def fake_score(jobs):
+        asked.extend(j.job_id for j in jobs)
+        return [Score(j.job_id, 8, "Good fit", ["MedTech"], ["Travel unknown"]) for j in jobs]
+
+    one_group = replace(cfg, groups=cfg.groups[:1], search=replace(cfg.search, max_calls=1))
+    search = FakeSearch({"Software Engineering Manager": [make(job_id="a")]})
+    summary = runner.run(one_group, search_fn=search, score_fn=fake_score, db=db, save_csv=False)
+    assert summary.scored == 1 and asked == ["a"]
+    row = tracker.list_all(db=db).iloc[0]
+    assert row["score"] == 8 and row["verdict"] == "Good fit"
+    assert tracker.unscored_job_ids(db=db) == set()
+    runner.run(one_group, search_fn=search, score_fn=fake_score, db=db, save_csv=False)
+    assert asked == ["a"]                     # second run: nothing new, nothing re-scored
+
+
+def test_scoring_failure_keeps_the_import(cfg, tmp_path):
+    def broken(jobs):
+        raise RuntimeError("no API key")
+    one_group = replace(cfg, groups=cfg.groups[:1], search=replace(cfg.search, max_calls=1))
+    search = FakeSearch({"Software Engineering Manager": [make(job_id="a")]})
+    summary = runner.run(one_group, search_fn=search, score_fn=broken, db=tmp_path / "t.db", save_csv=False)
+    assert summary.imported == 1
+    assert "no API key" in summary.errors[0]
 
 
 class FakeSearch:

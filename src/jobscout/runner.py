@@ -24,14 +24,36 @@ class Summary:
     dropped: dict[str, int] = field(default_factory=dict)
     kept: list[Job] = field(default_factory=list)
     imported: int = 0
+    scored: int = 0
     errors: list[str] = field(default_factory=list)
 
 
-def dedupe_key(job: Job) -> str:
-    """Same title + employer + city means the same posting, even under a different job_id."""
-    def norm(text: str | None) -> str:
-        return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
-    return f"{norm(job.title)}|{norm(job.employer)}|{norm(job.city)}"
+def _norm(text: str | None) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
+
+
+# Words that differ between sources without changing which job it is.
+_NOISE = {"hiring", "is", "in", "at", "us", "fl", "florida", "the", "a", "and"}
+
+
+def signature(title: str, employer: str, city: str | None) -> tuple[str, str, frozenset[str]]:
+    """(employer, city, title words) with location words and noise removed from the title."""
+    skip = _NOISE | set(_norm(city).split()) | set(_norm(employer).split())   # sites often add these
+    words = frozenset(w for w in _norm(title).split() if w not in skip)
+    return _norm(employer), _norm(city), words
+
+
+def same_posting(a: tuple, b: tuple, threshold: float = 0.6) -> bool:
+    """Same employer and city, and mostly the same title words (Jaccard similarity).
+
+    "Senior Construction Project Manager (Delray Beach)" and
+    "Senior Construction Project Manager - Delray Beach, Florida, US" are one job
+    that different sites title slightly differently.
+    """
+    if a[0] != b[0] or a[1] != b[1]:
+        return False
+    union = a[2] | b[2]
+    return not union or len(a[2] & b[2]) / len(union) >= threshold
 
 
 def _query(title: str, cfg: Config) -> str:
@@ -83,7 +105,11 @@ def fetch(cfg: Config, summary: Summary, search_fn: SearchFn = jsearch.search) -
     return [job for jobs in found.values() for job in jobs]
 
 
+ScoreFn = Callable[[list[Job]], list]      # e.g. scorer.score_jobs
+
+
 def run(cfg: Config | None = None, *, search_fn: SearchFn = jsearch.search,
+        score_fn: ScoreFn | None = None,
         db: Path = tracker.DB_PATH, save_csv: bool = True) -> Summary:
     cfg = cfg or config_mod.load()
     summary = Summary()
@@ -92,14 +118,20 @@ def run(cfg: Config | None = None, *, search_fn: SearchFn = jsearch.search,
 
     kept, summary.dropped = filters.apply(raw, cfg)
 
-    seen: set[str] = set()
+    # Start from what's already in the tracker, so yesterday's jobs re-posted by another
+    # site today don't come back as new.
+    existing = tracker.list_all(db=db)
+    seen_ids = set(existing["job_id"].dropna())
+    seen_sigs = [signature(r.title, r.employer, (r.location or "").split(",")[0])
+                 for r in existing.itertuples()]
     unique: list[Job] = []
     for job in kept:
-        keys = {job.job_id, dedupe_key(job)}
-        if keys & seen:
+        sig = signature(job.title, job.employer, job.city)
+        if job.job_id in seen_ids or any(same_posting(sig, s) for s in seen_sigs):
             summary.duplicates += 1
             continue
-        seen |= keys
+        seen_ids.add(job.job_id)
+        seen_sigs.append(sig)
         unique.append(job)
     summary.kept = unique
 
@@ -107,7 +139,22 @@ def run(cfg: Config | None = None, *, search_fn: SearchFn = jsearch.search,
         if save_csv:
             store.save(unique)
         summary.imported = tracker.import_jobs(store.to_frame(unique), db=db)
+        if score_fn:
+            _score(unique, score_fn, summary, db)
     return summary
+
+
+def _score(jobs: list[Job], score_fn: ScoreFn, summary: Summary, db: Path) -> None:
+    """Score jobs the tracker has no score for yet. A scoring failure never loses the import."""
+    pending = tracker.unscored_job_ids(db=db)
+    try:
+        scores = score_fn([j for j in jobs if j.job_id in pending])
+    except Exception as exc:
+        summary.errors.append(f"scoring: {exc}")
+        return
+    for s in scores:
+        tracker.save_score(s.job_id, s.score, s.verdict, s.reasons, s.concerns, db=db)
+    summary.scored = len(scores)
 
 
 def report(summary: Summary) -> str:
@@ -115,7 +162,7 @@ def report(summary: Summary) -> str:
     lines = [
         f"API calls: {summary.calls} | fetched: {summary.fetched} | duplicates: {summary.duplicates}",
         f"Dropped: {dropped}",
-        f"Kept {len(summary.kept)} -> {summary.imported} new in the tracker",
+        f"Kept {len(summary.kept)} -> {summary.imported} new in the tracker, {summary.scored} scored",
     ]
     lines += [f"ERROR {e}" for e in summary.errors]
     return "\n".join(lines)
