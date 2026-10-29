@@ -8,10 +8,11 @@ from jobscout import config
 
 def test_shipped_config_loads():
     cfg = config.load()
-    assert [g.name for g in cfg.groups] == [
+    assert [g.name for g in cfg.groups][:3] == [
         "Software Engineering Manager", "Technical Project Manager", "Director of Software Engineering"]
     assert cfg.location.zip == "33446"
-    assert cfg.location.radius_miles == 25
+    assert cfg.location.min_lat < cfg.location.max_lat
+    assert len(cfg.location.queries) >= 1
 
 
 @pytest.fixture

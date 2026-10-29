@@ -16,11 +16,13 @@ DATE_POSTED = {"all", "today", "3days", "week", "month"}
 
 @dataclass(frozen=True)
 class Location:
-    query: str
+    queries: tuple[str, ...]      # one search per title for each of these places
+    variant_query: str            # the (single) place used for title-variant searches
     zip: str
-    lat: float
-    lon: float
-    radius_miles: float
+    min_lat: float                # the area we accept, as a bounding box
+    max_lat: float
+    min_lon: float
+    max_lon: float
     nearby_cities: tuple[str, ...]
 
 
@@ -70,11 +72,13 @@ def parse(data: dict) -> Config:
 
     cfg = Config(
         location=Location(
-            query=_require(loc, "query", "location"),
+            queries=tuple(_require(loc, "queries", "location")),
+            variant_query=_require(loc, "variant_query", "location"),
             zip=str(_require(loc, "zip", "location")),
-            lat=float(_require(loc, "lat", "location")),
-            lon=float(_require(loc, "lon", "location")),
-            radius_miles=float(_require(loc, "radius_miles", "location")),
+            min_lat=float(_require(loc, "min_lat", "location")),
+            max_lat=float(_require(loc, "max_lat", "location")),
+            min_lon=float(_require(loc, "min_lon", "location")),
+            max_lon=float(_require(loc, "max_lon", "location")),
             nearby_cities=tuple(loc.get("nearby_cities", [])),
         ),
         search=SearchSettings(
@@ -99,8 +103,13 @@ def parse(data: dict) -> Config:
 
     if cfg.search.date_posted not in DATE_POSTED:
         raise ValueError(f"searches.toml: date_posted must be one of {sorted(DATE_POSTED)}")
-    if cfg.location.radius_miles <= 0 or cfg.search.max_calls < 1:
-        raise ValueError("searches.toml: radius_miles and max_calls must be positive")
+    loc_ = cfg.location
+    if not loc_.queries:
+        raise ValueError("searches.toml: [location] needs at least one entry in 'queries'")
+    if loc_.min_lat >= loc_.max_lat or loc_.min_lon >= loc_.max_lon:
+        raise ValueError("searches.toml: area box needs min_lat < max_lat and min_lon < max_lon")
+    if cfg.search.max_calls < 1:
+        raise ValueError("searches.toml: max_calls must be positive")
     for pattern in (*cfg.filters.title_include, *cfg.filters.title_exclude):
         try:
             re.compile(pattern)

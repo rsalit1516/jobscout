@@ -35,10 +35,10 @@ def drop_reason(job: Job, cfg: Config) -> str | None:
 
     loc = cfg.location
     if job.latitude is not None and job.longitude is not None:
-        if distance_miles(loc.lat, loc.lon, job.latitude, job.longitude) > loc.radius_miles:
-            return "outside radius"
+        if not (loc.min_lat <= job.latitude <= loc.max_lat and loc.min_lon <= job.longitude <= loc.max_lon):
+            return "outside area"
     elif (job.city or "").lower() not in {c.lower() for c in loc.nearby_cities}:
-        return "outside radius"          # no coordinates: fall back to the city list
+        return "outside area"            # no coordinates: fall back to the city list
     return None
 
 

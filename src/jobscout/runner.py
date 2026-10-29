@@ -56,17 +56,20 @@ def same_posting(a: tuple, b: tuple, threshold: float = 0.6) -> bool:
     return not union or len(a[2] & b[2]) / len(union) >= threshold
 
 
-def _query(title: str, cfg: Config) -> str:
-    return f"{title} in {cfg.location.query}"
+def _query(title: str, place: str) -> str:
+    return f"{title} in {place}"
 
 
 def plan(cfg: Config) -> list[str]:
     """Human-readable plan: primaries always run; variants only if the primary is thin."""
     lines = []
     for g in cfg.groups:
-        lines.append(f"{g.name}: '{_query(g.primary, cfg)}'")
-        lines.append(f"    + up to {len(g.variants)} variants if fewer than {cfg.search.thin_threshold} results")
-    lines.append(f"API call cap per run: {cfg.search.max_calls}")
+        for place in cfg.location.queries:
+            lines.append(f"{g.name}: '{_query(g.primary, place)}'")
+        lines.append(f"    + up to {len(g.variants)} variants ('... in {cfg.location.variant_query}') "
+                     f"if fewer than {cfg.search.thin_threshold} usable results")
+    primaries = len(cfg.groups) * len(cfg.location.queries)
+    lines.append(f"{primaries} primary calls; cap per run: {cfg.search.max_calls}")
     return lines
 
 
@@ -77,30 +80,32 @@ def fetch(cfg: Config, summary: Summary, search_fn: SearchFn = jsearch.search) -
     """Run primaries, then variants for thin groups, within the call cap. Returns raw (unfiltered) jobs."""
     found: dict[str, list[Job]] = {g.name: [] for g in cfg.groups}
 
-    def run(group: Group, title: str) -> None:
+    def run(group: Group, title: str, place: str) -> None:
         if summary.calls >= cfg.search.max_calls:
             return
         summary.calls += 1
         try:
-            jobs = search_fn(_query(title, cfg), date_posted=cfg.search.date_posted)
+            jobs = search_fn(_query(title, place), date_posted=cfg.search.date_posted)
         except Exception as exc:      # one failed call shouldn't sink the run
-            summary.errors.append(f"{title}: {exc}")
+            summary.errors.append(f"{title} in {place}: {exc}")
             return
         found[group.name].extend(jobs)
 
     for g in cfg.groups:
-        run(g, g.primary)
+        for place in cfg.location.queries:
+            run(g, g.primary, place)
 
     # Round-robin the variants across groups so one group can't use the whole budget.
-    # A group's "thin" check uses the filtered count, since that's what we'd actually keep.
+    # A group's "thin" check uses the filtered count of distinct jobs, since that's
+    # what we'd actually keep (the same job can come back from several places).
     def thin(g: Group) -> bool:
         kept, _ = filters.apply(found[g.name], cfg)
-        return len(kept) < cfg.search.thin_threshold
+        return len({j.job_id for j in kept}) < cfg.search.thin_threshold
 
     for round_ in zip_longest(*(g.variants for g in cfg.groups)):
         for g, variant in zip(cfg.groups, round_):
             if variant and thin(g):
-                run(g, variant)
+                run(g, variant, cfg.location.variant_query)
 
     return [job for jobs in found.values() for job in jobs]
 

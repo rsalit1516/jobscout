@@ -1,27 +1,36 @@
 # What jobscout searches for. Edit freely; `uv run jobscout-run --dry-run` shows what would run.
 
 [location]
-query = "Delray Beach, FL"     # appended to each search as "<title> in <query>"
+# Each title is searched once per place below, so every extra place costs one call per title group.
+# Tested: "South Florida" alone scatters results statewide; a single city returns only that city.
+queries = ["Fort Lauderdale, FL", "Boca Raton, FL", "West Palm Beach, FL"]
+# Title variants use one wide phrase instead, to save calls.
+variant_query = "Fort Lauderdale to West Palm Beach, FL"
 zip = "33446"
-lat = 26.45                    # approximate centre of the zip, used for the distance filter
-lon = -80.15
-radius_miles = 25
+# Area we accept (results are filtered by their coordinates): Broward + Palm Beach counties,
+# south to Hallandale, north to just past Palm Beach Gardens, west to about Weston.
+min_lat = 25.95
+max_lat = 26.90
+min_lon = -80.45
+max_lon = -79.90
 # Used only when a posting has no coordinates.
 nearby_cities = [
-    "Delray Beach", "Boca Raton", "Boynton Beach", "Lake Worth", "Wellington",
-    "West Palm Beach", "Deerfield Beach", "Highland Beach", "Palm Beach Gardens",
-    "Coconut Creek", "Coral Springs", "Pompano Beach",
+    "Delray Beach", "Boca Raton", "Boynton Beach", "Lake Worth", "Wellington", "Jupiter",
+    "West Palm Beach", "Deerfield Beach", "Highland Beach", "Palm Beach Gardens", "Riviera Beach",
+    "Coconut Creek", "Coral Springs", "Pompano Beach", "Fort Lauderdale", "Plantation", "Sunrise",
+    "Weston", "Davie", "Hollywood", "Hallandale Beach", "Dania Beach", "Lauderhill", "Tamarac",
+    "Margate", "Parkland", "Oakland Park", "Lighthouse Point", "Royal Palm Beach", "North Palm Beach",
 ]
 
 [search]
 date_posted = "week"           # all | today | 3days | week | month
 thin_threshold = 3             # run a group's variants only if its primary search finds fewer than this
-max_calls = 15                 # hard cap on API calls per run (free tier is ~200/month)
+max_calls = 24                 # hard cap on API calls per run (free tier is ~200/month)
 
 [filters]
 exclude_remote = true          # keep hybrid / on-site only
 # A title must match one of these (case-insensitive regex) to count as management-level...
-title_include = ['manager', 'mgr', 'director', 'head of', 'vice president', '\bvp\b']
+title_include = ['manager', 'mgr', 'director', 'head of', 'vice president', '\bvp\b', 'product owner']
 # ...and must not match any of these: entry-level / individual-contributor markers, then
 # trades and other non-software fields that "Project Manager" searches pull in.
 title_exclude = [
@@ -53,3 +62,18 @@ variants = [
     "Director of Engineering", "Director, Software Engineering", "Software Engineering Director",
     "Sr Director of Engineering", "Senior Director of Engineering",
 ]
+
+[[groups]]
+name = "Technical Program Manager"
+primary = "Technical Program Manager"
+variants = ["Senior Technical Program Manager", "Program Manager, Software", "IT Program Manager"]
+
+[[groups]]
+name = "Delivery Manager"
+primary = "Delivery Manager"
+variants = ["Software Delivery Manager", "IT Delivery Manager", "Agile Delivery Manager"]
+
+[[groups]]
+name = "Product Owner"
+primary = "Product Owner"
+variants = ["Senior Product Owner", "Technical Product Owner"]

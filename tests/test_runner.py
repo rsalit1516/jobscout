@@ -19,7 +19,20 @@ def make(job_id="1", title="Engineering Manager", employer="Acme", remote=False,
 
 @pytest.fixture
 def cfg():
-    return config.load()
+    """The shipped config, narrowed to one place so call counts in tests are easy to reason about."""
+    shipped = config.load()
+    return replace(shipped, location=replace(shipped.location, queries=shipped.location.queries[:1]))
+
+
+def test_each_title_is_searched_in_every_place_and_variants_use_the_wide_query(cfg, tmp_path):
+    places = ("Fort Lauderdale, FL", "Boca Raton, FL")
+    multi = replace(cfg, groups=cfg.groups[:1], location=replace(cfg.location, queries=places))
+    fake = FakeSearch({})                       # nothing found: variants will be tried
+    runner.run(multi, search_fn=fake, db=tmp_path / "t.db", save_csv=False)
+    primary = [q for q in fake.queries if q.startswith("Software Engineering Manager in ")]
+    assert [q.split(" in ")[1] for q in primary] == list(places)
+    variants = [q for q in fake.queries if not q.startswith("Software Engineering Manager in ")]
+    assert variants and all(q.endswith(cfg.location.variant_query) for q in variants)
 
 
 @pytest.mark.parametrize("job, reason", [
@@ -31,9 +44,9 @@ def cfg():
     (make(title="Associate Director of Engineering"), None),
     (make(title="Senior Construction Project Manager"), "entry-level/IC title"),   # non-software field
     (make(title="Hotel Engineering Manager"), "entry-level/IC title"),
-    (make(**FAR), "outside radius"),
+    (make(**FAR), "outside area"),
     (make(latitude=None, longitude=None, city="Boca Raton"), None),
-    (make(latitude=None, longitude=None, city="Tampa"), "outside radius"),
+    (make(latitude=None, longitude=None, city="Tampa"), "outside area"),
 ])
 def test_drop_reason(cfg, job, reason):
     assert filters.drop_reason(job, cfg) == reason
@@ -153,7 +166,7 @@ def test_run_dedupes_filters_and_imports(cfg, tmp_path):
     summary = runner.run(one_group, search_fn=fake, db=db, save_csv=False)
     assert summary.fetched == 5
     assert summary.duplicates == 1
-    assert summary.dropped == {"remote": 1, "outside radius": 1}
+    assert summary.dropped == {"remote": 1, "outside area": 1}
     assert summary.imported == 2
     assert len(tracker.list_all(db=db)) == 2
     # A second run imports nothing new.
