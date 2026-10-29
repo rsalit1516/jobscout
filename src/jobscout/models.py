@@ -22,6 +22,9 @@ class Job:
     description: str
     min_salary: float | None = None   # defaults must come after non-defaults
     max_salary: float | None = None
+    latitude: float | None = None     # used for the distance filter
+    longitude: float | None = None
+    publisher: str | None = None      # where the posting was found (LinkedIn, Indeed, ...)
 
     @classmethod
     def from_jsearch(cls, raw: dict) -> "Job":
@@ -47,6 +50,9 @@ class Job:
             description=raw.get("job_description") or "",
             min_salary=raw.get("job_min_salary"),
             max_salary=raw.get("job_max_salary"),
+            latitude=raw.get("job_latitude"),
+            longitude=raw.get("job_longitude"),
+            publisher=raw.get("job_publisher"),
         )
 
     def to_row(self) -> dict:

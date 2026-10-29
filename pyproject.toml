@@ -21,6 +21,7 @@ dev = [
 # After `uv sync`, `uv run jobscout ...` calls cli.main()
 jobscout = "jobscout.cli:main"
 jobscout-score = "jobscout.cli:score_main"
+jobscout-run = "jobscout.cli:run_main"
 
 [build-system]
 requires = ["hatchling"]

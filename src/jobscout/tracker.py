@@ -33,13 +33,14 @@ CREATE TABLE IF NOT EXISTS applications (
     notes          TEXT,
     created_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     posted_at      TEXT,                 -- when the employer posted it (from the source data)
-    retrieved_at   TEXT                  -- when we pulled it in
+    retrieved_at   TEXT,                 -- when we pulled it in
+    source         TEXT                  -- where it was found (LinkedIn, Indeed, ...)
 )
 """
 
 # Columns added after the first release. CREATE TABLE IF NOT EXISTS won't touch an
 # existing table, so _migrate() adds any of these that are missing.
-LATER_COLUMNS = {"posted_at": "TEXT", "retrieved_at": "TEXT"}
+LATER_COLUMNS = {"posted_at": "TEXT", "retrieved_at": "TEXT", "source": "TEXT"}
 
 # Columns the UI is allowed to change. Also guards update() against SQL injection,
 # since column names can't be passed as ? parameters.
@@ -66,6 +67,10 @@ def _connect(db: Path) -> sqlite3.Connection:
     return conn
 
 
+def _text(value) -> str | None:
+    return None if value is None or pd.isna(value) else str(value)
+
+
 def _as_date(value) -> str | None:
     """pandas Timestamp / datetime / NaT / None -> 'YYYY-MM-DD' or None."""
     return None if value is None or pd.isna(value) else pd.Timestamp(value).date().isoformat()
@@ -73,7 +78,7 @@ def _as_date(value) -> str | None:
 
 def add(title: str, employer: str, *, db: Path = DB_PATH, **fields) -> int:
     """Insert an application and return its id. Extra fields: see EDITABLE, plus job_id."""
-    unknown = set(fields) - EDITABLE - {"job_id", "retrieved_at"}
+    unknown = set(fields) - EDITABLE - {"job_id", "retrieved_at", "source"}
     if unknown:
         raise ValueError(f"Unknown fields: {sorted(unknown)}")
     if fields.get("status", "saved") not in STATUSES:
@@ -131,11 +136,12 @@ def import_jobs(jobs_df: pd.DataFrame, *, db: Path = DB_PATH) -> int:
                 str(p) for p in (row.city, row.state) if pd.notna(p))
             cur = conn.execute(
                 "INSERT OR IGNORE INTO applications "
-                "(job_id, title, employer, location, url, posted_at, retrieved_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "(job_id, title, employer, location, url, posted_at, retrieved_at, source) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 [row.job_id, row.title, row.employer, where,
                  row.apply_link if pd.notna(row.apply_link) else None,
-                 _as_date(row.posted_at), today],
+                 _as_date(row.posted_at), today,
+                 _text(getattr(row, "publisher", None))],
             )
             added += cur.rowcount        # 0 when the job_id already existed
     return added

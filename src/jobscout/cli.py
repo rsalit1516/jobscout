@@ -30,6 +30,21 @@ def main() -> None:
         print(f"  {job.title} | {job.employer} | {where}")
 
 
+def run_main() -> None:
+    """uv run jobscout-run [--dry-run]  (searches.toml decides what to fetch)"""
+    from jobscout import config, runner
+
+    parser = argparse.ArgumentParser(description="Run all configured searches and import into the tracker.")
+    parser.add_argument("--dry-run", action="store_true", help="show the plan; make no API calls")
+    args = parser.parse_args()
+
+    cfg = config.load()
+    if args.dry_run:
+        print("\n".join(runner.plan(cfg)))
+        return
+    print(runner.report(runner.run(cfg)))
+
+
 def score_main() -> None:
     """uv run jobscout-score [--limit 5] [--rescore]"""
     import pandas as pd
